@@ -1,0 +1,7 @@
+# Generated Cargo output; retain source and Cargo.lock.
+**/target/
+
+# Local credentials and machine-specific configuration.
+.env
+.env.*
+!.env.example

@@ -10,7 +10,11 @@ pub fn crc16(data: &[u8]) -> u16 {
     for &b in data {
         crc ^= (b as u16) << 8;
         for _ in 0..8 {
-            crc = if crc & 0x8000 != 0 { (crc << 1) ^ 0x1021 } else { crc << 1 };
+            crc = if crc & 0x8000 != 0 {
+                (crc << 1) ^ 0x1021
+            } else {
+                crc << 1
+            };
         }
     }
     crc
@@ -23,7 +27,11 @@ pub fn encode(msg_type: u8, payload: &[u8]) -> Vec<u8> {
     out.push(msg_type);
     out.extend_from_slice(&(payload.len() as u16).to_be_bytes());
     out.extend_from_slice(payload);
-    let mut chk = vec![msg_type, (payload.len() >> 8) as u8, (payload.len() & 0xFF) as u8];
+    let mut chk = vec![
+        msg_type,
+        (payload.len() >> 8) as u8,
+        (payload.len() & 0xFF) as u8,
+    ];
     chk.extend_from_slice(payload);
     out.extend_from_slice(&crc16(&chk).to_be_bytes());
     out

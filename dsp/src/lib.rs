@@ -6,7 +6,7 @@
 //! level/trend analysis → formants. Nothing here sends, stores, or publishes;
 //! it transforms sample blocks handed to it.
 
-pub mod framing;
 pub mod filter;
-pub mod tv;
+pub mod framing;
 pub mod lpc;
+pub mod tv;

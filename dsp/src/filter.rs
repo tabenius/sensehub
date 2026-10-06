@@ -76,7 +76,11 @@ impl OnePole {
         assert!(sample_rate > 0.0 && cutoff_hz > 0.0);
         let rc = 1.0 / (2.0 * PI * cutoff_hz);
         let dt = 1.0 / sample_rate;
-        Self { alpha: dt / (rc + dt), state: 0.0, init: false }
+        Self {
+            alpha: dt / (rc + dt),
+            state: 0.0,
+            init: false,
+        }
     }
 
     pub fn reset(&mut self) {
@@ -107,7 +111,12 @@ pub struct MovingAverage {
 impl MovingAverage {
     pub fn new(window: usize) -> Self {
         assert!(window > 0);
-        Self { window: vec![0.0; window], sum: 0.0, pos: 0, filled: 0 }
+        Self {
+            window: vec![0.0; window],
+            sum: 0.0,
+            pos: 0,
+            filled: 0,
+        }
     }
 
     pub fn step(&mut self, x: f64) -> f64 {
@@ -139,7 +148,9 @@ mod tests {
     }
 
     fn sine(freq: f64, rate: f64, n: usize) -> Vec<f64> {
-        (0..n).map(|i| (2.0 * PI * freq * i as f64 / rate).sin()).collect()
+        (0..n)
+            .map(|i| (2.0 * PI * freq * i as f64 / rate).sin())
+            .collect()
     }
 
     #[test]
@@ -159,9 +170,18 @@ mod tests {
         bp.reset();
         bp.process(&high, &mut out);
         let e_high = energy(&out[1024..]);
-        assert!(e_center > 0.25, "center should pass substantially, got {e_center}");
-        assert!(e_low < e_center / 20.0, "100 Hz should be rejected, got {e_low}");
-        assert!(e_high < e_center / 20.0, "3900 Hz should be rejected, got {e_high}");
+        assert!(
+            e_center > 0.25,
+            "center should pass substantially, got {e_center}"
+        );
+        assert!(
+            e_low < e_center / 20.0,
+            "100 Hz should be rejected, got {e_low}"
+        );
+        assert!(
+            e_high < e_center / 20.0,
+            "3900 Hz should be rejected, got {e_high}"
+        );
     }
 
     #[test]
@@ -180,7 +200,9 @@ mod tests {
         }
         // Step onset must not overshoot: check the transient peak.
         let mut one = OnePole::new(1000.0, 10.0);
-        let peak = (0..400).map(|i| one.step(if i < 100 { 0.0 } else { 1.0 })).fold(0.0_f64, f64::max);
+        let peak = (0..400)
+            .map(|i| one.step(if i < 100 { 0.0 } else { 1.0 }))
+            .fold(0.0_f64, f64::max);
         assert!(peak <= 1.0, "one-pole overshot to {peak}");
     }
 

@@ -21,21 +21,30 @@ impl Complex {
 impl std::ops::Add for Complex {
     type Output = Self;
     fn add(self, o: Self) -> Self {
-        Self { re: self.re + o.re, im: self.im + o.im }
+        Self {
+            re: self.re + o.re,
+            im: self.im + o.im,
+        }
     }
 }
 
 impl std::ops::Sub for Complex {
     type Output = Self;
     fn sub(self, o: Self) -> Self {
-        Self { re: self.re - o.re, im: self.im - o.im }
+        Self {
+            re: self.re - o.re,
+            im: self.im - o.im,
+        }
     }
 }
 
 impl std::ops::Mul for Complex {
     type Output = Self;
     fn mul(self, o: Self) -> Self {
-        Self { re: self.re * o.re - self.im * o.im, im: self.re * o.im + self.im * o.re }
+        Self {
+            re: self.re * o.re - self.im * o.im,
+            im: self.re * o.im + self.im * o.re,
+        }
     }
 }
 
@@ -43,7 +52,10 @@ impl std::ops::Div for Complex {
     type Output = Self;
     fn div(self, o: Self) -> Self {
         let d = o.norm2().max(1e-300);
-        Self { re: (self.re * o.re + self.im * o.im) / d, im: (self.im * o.re - self.re * o.im) / d }
+        Self {
+            re: (self.re * o.re + self.im * o.im) / d,
+            im: (self.im * o.re - self.re * o.im) / d,
+        }
     }
 }
 
@@ -115,7 +127,10 @@ fn durand_kerner(coeffs: &[f64], iterations: usize) -> Vec<Complex> {
         poly[i + 1] = -c;
     }
     let eval_fwd = |z: Complex| {
-        let mut acc = Complex { re: poly[0], im: 0.0 };
+        let mut acc = Complex {
+            re: poly[0],
+            im: 0.0,
+        };
         for &c in &poly[1..] {
             acc = acc * z + Complex { re: c, im: 0.0 };
         }
@@ -124,7 +139,10 @@ fn durand_kerner(coeffs: &[f64], iterations: usize) -> Vec<Complex> {
     let mut roots: Vec<Complex> = (0..n)
         .map(|i| {
             let angle = 2.0 * std::f64::consts::PI * (i as f64 + 0.5) / n as f64;
-            Complex { re: 0.4 * angle.cos(), im: 0.4 * angle.sin() }
+            Complex {
+                re: 0.4 * angle.cos(),
+                im: 0.4 * angle.sin(),
+            }
         })
         .collect();
     for _ in 0..iterations {
@@ -243,7 +261,11 @@ mod tests {
     fn recovers_synthetic_vowel_formants() {
         let fs = 8000.0;
         // Rough /a/: F1 730, F2 1090, F3 2440, bandwidths ~100 Hz.
-        let signal = synth_resonances(fs, 2048, &[(730.0, 100.0), (1090.0, 110.0), (2440.0, 140.0)]);
+        let signal = synth_resonances(
+            fs,
+            2048,
+            &[(730.0, 100.0), (1090.0, 110.0), (2440.0, 140.0)],
+        );
         let found = analyze(&signal, fs, 12).expect("analysis failed");
         assert!(found.len() >= 2, "expected formants, got {found:?}");
         for &target in &[730.0, 1090.0] {

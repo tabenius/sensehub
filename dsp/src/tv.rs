@@ -84,7 +84,12 @@ impl LevelDetector {
     /// `low_enter` must be below `high_enter`; the gap is the hysteresis.
     pub fn new(low_enter: f64, high_enter: f64) -> Self {
         assert!(low_enter < high_enter, "dead zone must be positive");
-        Self { low_enter, high_enter, high: false, armed: false }
+        Self {
+            low_enter,
+            high_enter,
+            high: false,
+            armed: false,
+        }
     }
 
     /// Feed one sample with its index. Returns an event on crossings only.
@@ -169,11 +174,23 @@ mod tests {
             }
         }
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0], LogicEvent { index: 7, high: true });
+        assert_eq!(
+            events[0],
+            LogicEvent {
+                index: 7,
+                high: true
+            }
+        );
         // Falling back through the zone without reaching low: silence.
         assert!(det.step(8, 1.5).is_none());
         let down = det.step(9, 0.5);
-        assert_eq!(down, Some(LogicEvent { index: 9, high: false }));
+        assert_eq!(
+            down,
+            Some(LogicEvent {
+                index: 9,
+                high: false
+            })
+        );
     }
 
     #[test]
@@ -181,7 +198,11 @@ mod tests {
         let noisy = noisy_steps();
         let clean = tv_denoise(&noisy, 0.6, 2000);
         let mut det = LevelDetector::new(1.0, 2.0);
-        let events: Vec<_> = clean.iter().enumerate().filter_map(|(i, &v)| det.step(i, v)).collect();
+        let events: Vec<_> = clean
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &v)| det.step(i, v))
+            .collect();
         assert_eq!(events.len(), 2, "one rise and one fall, got {events:?}");
         assert!(events[0].high && !events[1].high);
     }
