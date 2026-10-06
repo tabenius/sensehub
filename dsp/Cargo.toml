@@ -1,0 +1,9 @@
+[package]
+name = "sensehub-dsp"
+version = "0.1.0"
+edition = "2021"
+description = "Host-side DSP for the SenseHub companion: wire framing, bandpass, smoothing, level analysis and formants. Zero dependencies."
+
+[lib]
+name = "sensehub_dsp"
+path = "src/lib.rs"
