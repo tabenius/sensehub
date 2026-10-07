@@ -1,0 +1,6 @@
+{
+  "name": "sensehub-display-prototype",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test tests/*.test.js", "check": "node --check signal.js && node --check app.js && node --check channels.js && node --check channel-ui.js && node --check capabilities.js && node --check session.js" }
+}

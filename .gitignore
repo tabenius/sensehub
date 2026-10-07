@@ -1,5 +1,7 @@
 # Generated Cargo output; retain source and Cargo.lock.
 **/target/
+**/node_modules/
+**/__pycache__/
 
 # Local credentials and machine-specific configuration.
 .env

@@ -1,33 +1,36 @@
-// SenseHub ESP32 firmware v0 — fast scope channel plus slow sensor hub.
-//
-// What this is: one ADC1 channel sampled on a timer into a ring buffer and
-// streamed as binary frames over Bluetooth SPP or WiFi TCP, plus a slow poll
-// loop for cheap sensors (digital, analog, DHT22, HC-SR04, PIR) and an
-// I2C/SPI auto-detect that reports what it finds with honest confidence.
-//
-// What this is not: a finished product. ADC2 pins are unusable while WiFi
-// runs (the radio driver owns ADC2), so the scope channel stays on ADC1.
-// Bluetooth classic exists only on classic-BT parts — C3/S2/C6 builds should
-// select WiFi. Credentials below are placeholders; do not commit real ones.
-//
-// Board limits this firmware respects, not works around:
-//   GPIO operating window 0-3.3 V (abs max ~3.6 V). Divide first.
-//   ~12 mA comfortable per GPIO. Switch heavier loads, never drive them.
-//   VIN quirks belong to your board's regulator (AMS1117 vs ME6211).
+// SenseHub ESP32 firmware prototype — typed GPIO channels and optional sensors.
+// Board pin ownership and SoC backend capabilities are in board_config.h.
+// WiFi TCP / Classic SPP are compiled only where supported; serial framing is
+// the shared fallback. Camera, SD, BLE and high-speed logic capture are pending.
+// The old ADC1 scope and automatic buses require the explicit classic bench
+// profile; they are not defaults for a camera board or another SoC family.
+// Electrical limits and attached wiring belong to the exact board/sensor.
+// Arduino integration is not yet board-compiled or hardware-tested.
 
 #include <Arduino.h>
+#include "board_config.h"
+#if HAVE_WIFI
 #include <WiFi.h>
+#endif
 #include <Wire.h>
 #include <SPI.h>
 #include <esp_timer.h>
 #include <Preferences.h>
+#include <esp_arduino_version.h>
+#include "channel_core.h"
 
-#if defined(CONFIG_BT_ENABLED)
+static const bool CAMERA_BOARD = SENSEHUB_AI_THINKER_CAM != 0;
+#if defined(CONFIG_IDF_TARGET_ESP32)
+static const bool BENCH_BUSES = SENSEHUB_CLASSIC_BENCH != 0;
+static const bool SCOPE_ENABLED = SENSEHUB_CLASSIC_BENCH != 0;
+#else
+static const bool BENCH_BUSES = false, SCOPE_ENABLED = false;
+#endif
+static const sensehub::PinPolicy CHANNEL_POLICY = sensehub::boardPolicy();
+
+#if HAVE_BT
 #include <BluetoothSerial.h>
 BluetoothSerial SerialBT;
-#define HAVE_BT 1
-#else
-#define HAVE_BT 0
 #endif
 
 #define FW_MAJOR 0
@@ -45,7 +48,7 @@ BluetoothSerial SerialBT;
 // learns nothing and a rebooted hub rejoins without another ceremony.
 static const uint16_t WIFI_PORT = 3232;
 static const char *BT_NAME = "SenseHub";
-static const int BOOT_BUTTON_PIN = 0;     // hold 5 s to unclaim (factory reset)
+static const int BOOT_BUTTON_PIN = SENSEHUB_BOOT_BUTTON_PIN;
 static const uint32_t SETUP_WINDOW_MS = 600000;  // 10 min TOFU window after boot
 static const int SCOPE_PIN = 34;          // ADC1, input-only: no driver to fight
 static const int I2C_SDA = 21, I2C_SCL = 22;
@@ -53,14 +56,14 @@ static const int SPI_SCK = 18, SPI_MISO = 19, SPI_MOSI = 23;
 static const int SPI_CS_PINS[] = {};      // add configured CS pins here, e.g. {5, 17}
 
 // ---- CRC-16/CCITT shared with the app side ----
-static uint16_t crc16(const uint8_t *data, size_t len) {
-  uint16_t crc = 0xFFFF;
+static uint16_t crc16Update(uint16_t crc, const uint8_t *data, size_t len) {
   for (size_t i = 0; i < len; i++) {
     crc ^= (uint16_t)data[i] << 8;
     for (uint8_t b = 0; b < 8; b++) crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
   }
   return crc;
 }
+static uint16_t crc16(const uint8_t *data, size_t len) { return crc16Update(0xFFFF, data, len); }
 
 // ---- ring buffer: single producer (timer), single consumer (loop) ----
 // Power of two so indices wrap with a mask. Overwrite-oldest keeps the live
@@ -92,8 +95,10 @@ static RingBuffer<4096> scopeRing;
 
 // ---- runtime state ----
 static volatile uint32_t g_sampleRateHz = 8000;
-static volatile bool g_streaming = true;
-static uint8_t g_transport = 0;           // 0 = BT, 1 = WiFi
+static volatile bool g_streaming = SCOPE_ENABLED;
+static uint8_t g_transport = HAVE_BT ? 0 : HAVE_WIFI ? 1 : 3; // 2 USB framed; 3 idle
+static bool g_usbFramed = false;
+static int8_t g_replyTransport = -1;      // command replies return over their source
 static const uint16_t BATCH = 128;
 static uint16_t batchBuf[BATCH];
 
@@ -123,23 +128,27 @@ static VerifyResult verifyEd25519(const uint8_t *msg, size_t msgLen,
 }
 
 // ---- framed output (BT or TCP client, whichever streams) ----
+#if HAVE_WIFI
 static WiFiServer tcpServer(WIFI_PORT);
 static WiFiClient tcpClient;
+#endif
 static bool wifiUp = false;
 
 static void sendFrame(uint8_t type, const uint8_t *payload, uint16_t len) {
   if (len > 4096) return;
   uint8_t hdr[5] = {0x53, 0x48, type, (uint8_t)(len >> 8), (uint8_t)(len & 0xFF)};
-  uint8_t crcIn[3 + 4096];
+  uint8_t crcIn[3];
   crcIn[0] = type; crcIn[1] = hdr[3]; crcIn[2] = hdr[4];
-  if (len) memcpy(crcIn + 3, payload, len);
-  uint16_t crc = crc16(crcIn, 3 + len);
+  uint16_t crc = crc16Update(crc16(crcIn, 3), payload, len);
   uint8_t tail[2] = {(uint8_t)(crc >> 8), (uint8_t)(crc & 0xFF)};
   auto writeAll = [&](const uint8_t *p, size_t n) {
 #if HAVE_BT
-    if (g_transport == 0 && SerialBT.hasClient()) SerialBT.write(p, n);
+    if ((g_replyTransport < 0 ? g_transport : g_replyTransport) == 0 && SerialBT.hasClient()) SerialBT.write(p, n);
 #endif
-    if (g_transport == 1 && tcpClient && tcpClient.connected()) tcpClient.write(p, n);
+#if HAVE_WIFI
+    if ((g_replyTransport < 0 ? g_transport : g_replyTransport) == 1 && tcpClient && tcpClient.connected()) tcpClient.write(p, n);
+#endif
+    if ((g_replyTransport < 0 ? g_transport : g_replyTransport) == 2 && g_usbFramed) Serial.write(p, n);
   };
   writeAll(hdr, 5);
   if (len) writeAll(payload, len);
@@ -147,11 +156,15 @@ static void sendFrame(uint8_t type, const uint8_t *payload, uint16_t len) {
 }
 
 static void sendHello() {
-  uint8_t caps = CAPS_ADC | CAPS_I2C | CAPS_SPI | CAPS_DHT;
+  uint8_t caps = CAPS_DHT;
+  if (SCOPE_ENABLED) caps |= CAPS_ADC;
+  if (BENCH_BUSES) caps |= CAPS_I2C | CAPS_SPI;
 #if HAVE_BT
   caps |= CAPS_BT;
 #endif
+#if HAVE_WIFI
   caps |= CAPS_WIFI;
+#endif
   uint8_t p[3] = {FW_MAJOR, FW_MINOR, caps};
   sendFrame(0x01, p, 3);
 }
@@ -175,6 +188,7 @@ static void IRAM_ATTR sampleTimer(void *arg) {
 static esp_timer_handle_t sampleHandle = nullptr;
 
 static void startSampler(uint32_t rateHz) {
+  if (!SCOPE_ENABLED) return; // Scope needs an explicitly wired bench profile.
   if (sampleHandle) { esp_timer_stop(sampleHandle); esp_timer_delete(sampleHandle); }
   const esp_timer_create_args_t args = {.callback = sampleTimer, .name = "scope"};
   esp_timer_create(&args, &sampleHandle);
@@ -234,7 +248,7 @@ static void pollSlot(uint8_t i, uint32_t now) {
   s.last = now;
   s.status = 2;
   if (s.kind == K_DIGITAL || s.kind == K_PIR) {
-    pinMode(s.pin, INPUT_PULLUP);
+    pinMode(s.pin, CHANNEL_POLICY.pulls & sensehub::pinBit(uint8_t(s.pin)) ? INPUT_PULLUP : INPUT);
     s.value = (float)digitalRead(s.pin);
     s.status = 0;
   } else if (s.kind == K_ANALOG_SLOW) {
@@ -346,6 +360,122 @@ static void sendDetect() {
   sendFrame(0x04, p, n);
 }
 
+// ---- typed channel API: independent of legacy sensor slots ----
+static sensehub::ChannelState labChannels[8]; // ids 8..15, no collision with scope/slots
+
+static void releaseChannelHardware(const sensehub::ChannelConfig &c) {
+  if (c.mode == sensehub::Disabled) return;
+  if (c.mode == sensehub::PwmOutput) {
+#if SOC_LEDC_SUPPORTED
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcDetach(c.pin);
+#else
+    ledcDetachPin(c.pin);
+#endif
+#endif
+  }
+  if (c.mode == sensehub::DigitalOutput || c.mode == sensehub::PwmOutput) digitalWrite(c.pin, LOW);
+  pinMode(c.pin, INPUT);
+}
+
+static bool startChannelHardware(const sensehub::ChannelConfig &c) {
+  if (c.mode == sensehub::Disabled) return true;
+  if (c.mode == sensehub::DigitalInput) {
+    pinMode(c.pin, c.pull == 1 ? INPUT_PULLUP : c.pull == 2 ? INPUT_PULLDOWN : INPUT);
+  } else if (c.mode == sensehub::DigitalOutput) {
+    digitalWrite(c.pin, c.output ? HIGH : LOW); pinMode(c.pin, OUTPUT);
+  } else {
+#if SOC_LEDC_SUPPORTED
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    if (!ledcAttachChannel(c.pin, c.frequency, 10, 0)) return false;
+    if (!ledcWrite(c.pin, c.duty)) { ledcDetach(c.pin); return false; }
+#else
+    if (ledcSetup(0, c.frequency, 10) <= 0) return false;
+    ledcAttachPin(c.pin, 0); ledcWrite(0, c.duty);
+#endif
+#else
+    return false;
+#endif
+  }
+  return true;
+}
+
+static sensehub::Error applyChannel(const sensehub::ChannelConfig &c) {
+  auto error = sensehub::validate(c, labChannels, 8, CHANNEL_POLICY);
+  if (error != sensehub::Ok) return error;
+  if (c.mode != sensehub::Disabled) for (const auto &slot : slots) {
+    if (slot.kind != K_NONE && (slot.pin == c.pin || slot.pin2 == c.pin)) return sensehub::PinBusy;
+  }
+  auto &state = labChannels[c.id - 8]; const auto old = state.config;
+  releaseChannelHardware(old);
+  if (!startChannelHardware(c)) {
+    // Restore the old binding if attachment failed. If restoration fails too,
+    // report the resulting disabled state instead of claiming the old output.
+    releaseChannelHardware(c);
+    if (!startChannelHardware(old)) { auto disabled = old; disabled.mode = sensehub::Disabled; sensehub::configure(state, disabled); }
+    return sensehub::HardwareFailure;
+  }
+  sensehub::configure(state, c); return sensehub::Ok;
+}
+
+static void sendChannelConfig(uint8_t id) {
+  const auto &s = labChannels[id - 8]; const auto &c = s.config;
+  uint8_t p[20] = {c.id,c.mode,c.pin,c.pull,c.invert,
+    uint8_t(c.pollMs >> 8),uint8_t(c.pollMs),uint8_t(c.debounceMs >> 8),uint8_t(c.debounceMs),c.output,
+    uint8_t(c.frequency >> 24),uint8_t(c.frequency >> 16),uint8_t(c.frequency >> 8),uint8_t(c.frequency),uint8_t(c.duty >> 8),uint8_t(c.duty),
+    uint8_t(s.revision >> 24),uint8_t(s.revision >> 16),uint8_t(s.revision >> 8),uint8_t(s.revision)};
+  sendFrame(0x0A, p, sizeof(p));
+}
+
+static void pinList(uint64_t mask, char *text, size_t size) {
+  size_t n = 0; text[n++] = '[';
+  for (uint8_t pin = 0; pin < 64; pin++) if (mask & sensehub::pinBit(pin)) {
+    const int wrote = snprintf(text + n, size - n, "%s%u", n > 1 ? "," : "", pin);
+    if (wrote < 0 || size_t(wrote) >= size - n) return; n += wrote;
+  }
+  if (n + 2 <= size) { text[n++] = ']'; text[n] = 0; }
+}
+static void sendCapabilities(bool usb = false) {
+  static char json[4096];
+  char inputs[256], outputs[256], noPull[256];
+  pinList(CHANNEL_POLICY.inputs, inputs, sizeof(inputs));
+  pinList(CHANNEL_POLICY.outputs, outputs, sizeof(outputs));
+  pinList(CHANNEL_POLICY.inputs & ~CHANNEL_POLICY.pulls, noPull, sizeof(noPull));
+  int n = snprintf(json, sizeof(json),
+    "{\"schemaVersion\":1,\"profile\":\"%s\",\"soc\":\"%s\",\"transportSupport\":{\"usbFramed\":true,\"wifi\":%s,\"bluetoothSpp\":%s,\"bleHardware\":%s,\"bleImplemented\":false},\"channelIds\":[8,9,10,11,12,13,14,15],"
+    "\"availablePins\":%s,\"outputPins\":%s,\"noPullPins\":%s,\"scopeSampler\":%s,\"modes\":%s,\"capture\":\"loop-poll\",\"timestampUnit\":\"us\","
+    "\"nominalMinPollMs\":1,\"pwmSlots\":%u,\"pwmResolutionBits\":10,\"pwmMaxHz\":20000,"
+    "\"processing\":[\"invert\",\"stable-debounce\"],\"identity\":\"user-configured GPIO; sensor unknown\",\"channels\":[",
+    sensehub::boardName(), ESP.getChipModel(), HAVE_WIFI ? "true" : "false", HAVE_BT ? "true" : "false", HAVE_BLE_HARDWARE ? "true" : "false",
+    inputs, outputs, noPull, SCOPE_ENABLED ? "true" : "false",
+    !CHANNEL_POLICY.inputs ? "[]" : !CHANNEL_POLICY.outputs ? "[\"digital-input\"]" : CHANNEL_POLICY.pwm ? "[\"digital-input\",\"digital-output\",\"pwm-output\"]" : "[\"digital-input\",\"digital-output\"]",
+    CHANNEL_POLICY.pwm && CHANNEL_POLICY.outputs ? 1 : 0);
+  for (uint8_t i = 0; i < 8 && n > 0 && size_t(n) < sizeof(json) - 180; i++) {
+    const auto &s = labChannels[i]; const auto &c = s.config;
+    n += snprintf(json + n, sizeof(json) - n,
+      "%s{\"id\":%u,\"mode\":%u,\"pin\":%u,\"pollMs\":%u,\"debounceMs\":%u,\"revision\":%lu}",
+      i ? "," : "",c.id,c.mode,c.pin,c.pollMs,c.debounceMs,(unsigned long)s.revision);
+  }
+  if (n < 0 || size_t(n) >= sizeof(json) - 3) return;
+  snprintf(json + n, sizeof(json) - n, "]}");
+  if (usb) Serial.println(json); else sendFrame(0x08, (const uint8_t *)json, strlen(json));
+}
+
+static void pollLabChannels(uint64_t nowUs) {
+  for (auto &state : labChannels) {
+    const auto &c = state.config;
+    if (c.mode != sensehub::DigitalInput || (state.sampled && nowUs - state.lastPoll < uint64_t(c.pollMs) * 1000)) continue;
+    const auto observation = sensehub::observe(state, digitalRead(c.pin) == HIGH, nowUs);
+    uint8_t p[20]; p[0] = c.id;
+    for (uint8_t i = 0; i < 8; i++) p[1 + i] = uint8_t(nowUs >> (56 - 8 * i));
+    p[9] = observation.raw; p[10] = observation.value;
+    p[11] = (observation.valid ? 0 : 1) | (observation.gap ? 2 : 0);
+    const uint32_t seq = state.sequence++;
+    for (uint8_t i = 0; i < 4; i++) { p[12 + i] = seq >> (24 - 8 * i); p[16 + i] = state.revision >> (24 - 8 * i); }
+    sendFrame(0x09, p, sizeof(p));
+  }
+}
+
 // ---- framed inbound: pairing first, signatures after ----
 static void handleInner(uint8_t type, const uint8_t *p, uint16_t n, bool viaBt);
 
@@ -382,6 +512,7 @@ static void handleClaim(const uint8_t *p, uint16_t n) {
 }
 
 static void handleJoin(const uint8_t *p, uint16_t n, bool viaBt) {
+#if HAVE_WIFI
   // JOIN is honored from Bluetooth so the WiFi link being replaced never has
   // to carry its own replacement. AP stays up throughout (APSTA).
   if (n < 2 || p[0] + 1 > n) return;
@@ -395,7 +526,6 @@ static void handleJoin(const uint8_t *p, uint16_t n, bool viaBt) {
   (void)viaBt;
   WiFi.mode(WIFI_AP_STA);
   WiFi.begin(ssid, psk);
-  memset(psk, 0, sizeof(psk));
   unsigned long t0 = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) delay(250);
   if (WiFi.status() == WL_CONNECTED) {
@@ -406,14 +536,20 @@ static void handleJoin(const uint8_t *p, uint16_t n, bool viaBt) {
   } else {
     sendLog(2, "station join failed; AP and BT still serving");
   }
+  memset(psk, 0, sizeof(psk));
+#else
+  (void)p; (void)n; (void)viaBt; sendLog(2, "WiFi backend unavailable on this target");
+#endif
 }
 
 static void handleInner(uint8_t type, const uint8_t *p, uint16_t n, bool viaBt) {
   (void)viaBt;
   if (type == 0x10 && n == 6) {  // CONFIG
+    if (!SCOPE_ENABLED) { const uint8_t ack[2] = {0x10, sensehub::UnsupportedPin}; sendFrame(0x06, ack, 2); return; }
     uint32_t rate = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
     if (rate >= 100 && rate <= 40000) startSampler(rate);
   } else if (type == 0x11 && n == 1) {
+    if (!BENCH_BUSES) { const uint8_t ack[2] = {0x11, sensehub::UnsupportedPin}; sendFrame(0x06, ack, 2); return; }
     if (p[0] & 0x01) { scanI2C(); }
     if (p[0] & 0x04) { scanSPI(); }
     sendDetect();
@@ -422,6 +558,11 @@ static void handleInner(uint8_t type, const uint8_t *p, uint16_t n, bool viaBt) 
     pollSlot(p[0], millis());
   } else if (type == 0x16) {
     handleJoin(p, n, viaBt);
+  } else if (type == 0x21) {
+    sensehub::ChannelConfig config;
+    const auto code = sensehub::decodeConfig(p, n, config) ? applyChannel(config) : sensehub::Invalid;
+    const uint8_t ack[2] = {0x21, uint8_t(code)}; sendFrame(0x06, ack, 2);
+    if (config.id >= 8 && config.id <= 15) sendChannelConfig(config.id);
   }
 }
 
@@ -429,7 +570,8 @@ static void handleInner(uint8_t type, const uint8_t *p, uint16_t n, bool viaBt) 
 struct FrameParser {
   uint8_t buf[4200];
   size_t len = 0;
-  void feed(const uint8_t *data, size_t n, bool viaBt) {
+  void feed(const uint8_t *data, size_t n, uint8_t sourceTransport) {
+    const bool viaBt = sourceTransport == 0;
     if (len + n > sizeof(buf)) len = 0;
     memcpy(buf + len, data, n);
     len += n;
@@ -447,7 +589,9 @@ struct FrameParser {
       uint16_t want = ((uint16_t)buf[5 + payLen] << 8) | buf[6 + payLen];
       uint8_t type = buf[2];
       if (crc16(chk, 3 + payLen) == want) {
-        if (type == 0x13) { uint8_t ok[1] = {0}; sendFrame(0x06, ok, 1); }
+        g_replyTransport = sourceTransport;
+        if (type == 0x13) { uint8_t ok[2] = {0x13, 0}; sendFrame(0x06, ok, 2); }
+        else if (type == 0x20 && payLen == 0) sendCapabilities();
         else if (type == 0x15) {
           for (uint8_t i = 0; i < 24; i++) g_nonce[i] = (uint8_t)esp_random();
           g_nonceLive = true;
@@ -459,54 +603,82 @@ struct FrameParser {
           sendFrame(0x07, rp, 33);
         }
         else if (type == 0x14) handleClaim(buf + 5, payLen);
+        else if (sourceTransport == 2 && type == 0x21) handleInner(type, buf + 5, payLen, false);
         else if (g_claimed) handleSigned(buf + 5, payLen, viaBt);
         // Unclaimed and outside the setup window: silent drop, no oracle.
+        g_replyTransport = -1;
       }
       memmove(buf, buf + 5 + payLen + 2, len - 5 - payLen - 2);
       len -= 5 + payLen + 2;
     }
   }
 };
-static FrameParser btParser, tcpParser;
+static FrameParser btParser, tcpParser, usbParser;
 
 // ---- human serial commands (USB) ----
 static void handleSerialLine(const String &line) {
-  if (line.startsWith("RATE ")) { startSampler(line.substring(5).toInt()); Serial.println("rate set"); }
+  if (line == "CAPABILITIES") { sendCapabilities(true); }
+  else if (line.startsWith("CHANNEL ")) {
+    int id, mode, pin, pull, invert, poll, hold, output, frequency, duty;
+    if (sscanf(line.c_str(), "CHANNEL %d %d %d %d %d %d %d %d %d %d", &id,&mode,&pin,&pull,&invert,&poll,&hold,&output,&frequency,&duty) != 10 ||
+        id < 8 || id > 15 || mode < 0 || mode > 3 || pin < 0 || pin > 63 || pull < 0 || pull > 2 || invert < 0 || invert > 1 || poll < 1 || poll > 60000 || hold < 0 || hold > 60000 || output < 0 || output > 1 || frequency < 0 || frequency > 20000 || duty < 0 || duty > 1023) {
+      Serial.println("error: CHANNEL id mode pin pull invert poll_ms debounce_ms output frequency duty_10bit");
+    } else {
+      sensehub::ChannelConfig c; c.id=id; c.mode=mode; c.pin=pin; c.pull=pull; c.invert=invert; c.pollMs=poll; c.debounceMs=hold; c.output=output; c.frequency=frequency; c.duty=duty;
+      Serial.printf("channel_config_result=%u\n", uint8_t(applyChannel(c))); sendCapabilities(true);
+    }
+  }
+  else if (line.startsWith("RATE ")) { const long rate = line.substring(5).toInt(); if (!SCOPE_ENABLED) Serial.println("scope ADC unavailable in this board profile"); else if (rate >= 100 && rate <= 40000) { startSampler(rate); Serial.println("rate set"); } else Serial.println("rate must be 100..40000"); }
   else if (line.startsWith("CH ")) { Serial.println("single ADC1 channel in v0; reflash to move it"); }
-  else if (line == "MODE BT") { g_transport = 0; Serial.println("transport=bt"); }
-  else if (line == "MODE WIFI") { g_transport = 1; Serial.println("transport=wifi"); }
-  else if (line == "SCAN") { scanI2C(); scanSPI(); sendDetect(); Serial.println("scan sent"); }
+  else if (line == "MODE BT") { if (HAVE_BT) { g_transport = 0; Serial.println("transport=bt"); } else Serial.println("Bluetooth SPP unavailable"); }
+  else if (line == "MODE WIFI") { if (HAVE_WIFI) { g_transport = 1; Serial.println("transport=wifi"); } else Serial.println("WiFi unavailable"); }
+  else if (line == "MODE USB") { Serial.println("transport=usb-framed; reboot to return to text commands"); g_usbFramed = true; g_transport = 2; }
+  else if (line == "SCAN") { if (!BENCH_BUSES) Serial.println("buses unconfigured in this board profile"); else { scanI2C(); scanSPI(); sendDetect(); Serial.println("scan sent"); } }
   else if (line.startsWith("SLOT ")) {
     // SLOT <i> <kind> <pin> [pin2] [interval_ms]  e.g. SLOT 0 3 15 0 2000
     int i, k, pin, pin2 = -1, iv = 2000;
     if (sscanf(line.c_str(), "SLOT %d %d %d %d %d", &i, &k, &pin, &pin2, &iv) >= 3 && i >= 0 && i < 8) {
+      if (k < K_DIGITAL || k > K_PIR || iv < 1 || iv > 60000 || pin < 0 || pin > 63 ||
+          !sensehub::inputPin(uint8_t(pin), CHANNEL_POLICY) ||
+          (!SCOPE_ENABLED && k == K_ANALOG_SLOW) ||
+          (k == K_DHT22 && (!sensehub::outputPin(uint8_t(pin), CHANNEL_POLICY) || iv < 2000)) ||
+          (k == K_HCSR04 && (pin2 < 0 || pin2 > 63 || pin == pin2 || !sensehub::outputPin(uint8_t(pin), CHANNEL_POLICY) || !sensehub::inputPin(uint8_t(pin2), CHANNEL_POLICY)))) {
+        Serial.println("unsupported sensor/pin/interval for board profile"); return;
+      }
+      bool busy = false;
+      for (const auto &channel : labChannels) if (channel.config.mode != sensehub::Disabled && (channel.config.pin == pin || channel.config.pin == pin2)) busy = true;
+      if (busy) { Serial.println("pin used by typed channel"); return; }
       slots[i].kind = (SensorKind)k; slots[i].pin = pin; slots[i].pin2 = pin2; slots[i].interval = iv;
       Serial.println("slot set");
     } else Serial.println("usage: SLOT i kind pin [pin2] [ms]");
   }
   else if (line == "STATUS") {
     Serial.printf("rate=%lu streaming=%d transport=%s ring=%u dropped=%lu claimed=%d ap=%s\n",
-      (unsigned long)g_sampleRateHz, g_streaming, g_transport ? "wifi" : "bt",
+      (unsigned long)g_sampleRateHz, g_streaming, g_transport == 0 ? "bt" : g_transport == 1 ? "wifi" : g_transport == 2 ? "usb" : "idle",
       scopeRing.available(), (unsigned long)scopeRing.dropped, (int)g_claimed, g_apName);
   }
-  else if (line == "HELP") Serial.println("RATE n | MODE BT|WIFI | SCAN | SLOT i kind pin [pin2] [ms] | STATUS");
+  else if (line == "HELP") Serial.println("CAPABILITIES | CHANNEL id mode pin pull invert poll_ms debounce_ms output frequency duty_10bit | RATE n | MODE BT|WIFI|USB | SCAN | SLOT i kind pin [pin2] [ms] | STATUS");
   else Serial.println("unknown; try HELP");
 }
 
 void setup() {
   Serial.begin(115200);
+  for (uint8_t i = 0; i < 8; i++) labChannels[i].config.id = 8 + i;
   g_bootMs = millis();
   prefs.begin("sensehub", false);
   g_claimed = prefs.getBool("claimed", false);
   g_lastCounter = prefs.getUInt("lastctr", 0);
   if (g_claimed) prefs.getBytes("adminkey", g_adminKey, 32);
-  pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
-  analogSetPinAttenuation(SCOPE_PIN, ADC_11db);
-  Wire.begin(I2C_SDA, I2C_SCL);
-  SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
+  if (BOOT_BUTTON_PIN >= 0) pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+  if (SCOPE_ENABLED) analogSetPinAttenuation(SCOPE_PIN, ADC_11db);
+  if (BENCH_BUSES) {
+    Wire.begin(I2C_SDA, I2C_SCL);
+    SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
+  }
   // Boot is always access-point first: nothing joins a network uninvited.
   uint32_t chip = (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
   snprintf(g_apName, sizeof(g_apName), "SenseHub-%04X", chip);
+#if HAVE_WIFI
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(g_apName);
   tcpServer.begin();  // LAN/owner side; setup commands still need pairing
@@ -519,10 +691,10 @@ void setup() {
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < 5000) delay(250);
     wifiUp = WiFi.status() == WL_CONNECTED;
   }
+#endif
 #if HAVE_BT
   SerialBT.begin(String(g_apName));
 #endif
-  wifiUp = false;  // station joins only via a signed JOIN, never at boot
   startSampler(g_sampleRateHz);
   sendHello();
   char msg[96];
@@ -535,7 +707,7 @@ void loop() {
   static unsigned long bootHoldStart = 0;
   // Physical recovery: hold BOOT 5 s to unclaim. Documented, deliberate,
   // and the only unauthenticated state change after claiming.
-  if (digitalRead(BOOT_BUTTON_PIN) == LOW) {
+  if (BOOT_BUTTON_PIN >= 0 && digitalRead(BOOT_BUTTON_PIN) == LOW) {
     if (!bootHoldStart) bootHoldStart = millis();
     if (millis() - bootHoldStart > 5000 && g_claimed) {
       prefs.putBool("claimed", false);
@@ -545,29 +717,37 @@ void loop() {
       bootHoldStart = millis();  // re-arm only after release below
     }
   } else bootHoldStart = 0;
-  while (Serial.available()) {
+  while (!g_usbFramed && Serial.available()) {
     char c = Serial.read();
     if (c == '\n') { handleSerialLine(line); line = ""; }
     else if (c != '\r') line += c;
+  }
+  if (g_usbFramed) {
+    uint8_t chunk[256]; size_t n = 0;
+    while (n < sizeof(chunk) && Serial.available()) chunk[n++] = Serial.read();
+    if (n) usbParser.feed(chunk, n, 2);
   }
 #if HAVE_BT
   while (SerialBT.available()) {
     uint8_t chunk[256];
     size_t n = 0;
     while (n < sizeof(chunk) && SerialBT.available()) chunk[n++] = SerialBT.read();
-    if (n) btParser.feed(chunk, n, true);
+    if (n) btParser.feed(chunk, n, 0);
   }
 #endif
+#if HAVE_WIFI
   if (!tcpClient) tcpClient = tcpServer.available();
   if (tcpClient) {
     if (!tcpClient.connected()) tcpClient.stop();
     else {
       uint8_t chunk[512];
       int n = tcpClient.read(chunk, sizeof(chunk));
-      if (n > 0) tcpParser.feed(chunk, n, false);
+      if (n > 0) tcpParser.feed(chunk, n, 1);
     }
   }
+#endif
   uint32_t now = millis();
+  pollLabChannels(uint64_t(esp_timer_get_time()));
   for (uint8_t i = 0; i < 8; i++) pollSlot(i, now);
   if (g_streaming && scopeRing.available() >= BATCH) {
     uint32_t seq0;

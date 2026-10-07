@@ -11,6 +11,26 @@ Companion artifact for bench sensing: ESP32 firmware plus host-side analysis.
 - `docs/` — protocol, 37-module kit mapping, sensing-hub chapter outline, and
   [formant ridge tracking research](docs/formant-ridge-research.md).
 
+Spectrum/cepstrum marker toggles, musical labels, and selectable hover details
+are captured in [display controls](docs/display-controls.md).
+
+An interactive [spectral bench prototype](ui/README.md) implements these
+controls for synthetic and local-file audio, with spectrum markers and a
+frequency-valued formant readout linked to the real cepstrum.
+
+The [channel lab](docs/channel-lab.md) adds multiple digital/numeric input
+timelines, raw/derived comparisons, processing controls, and an ESP32
+capability/configuration extension for polled digital inputs and digital/PWM
+outputs. The document maps sensor-cleanup and decoding recipes to device/host
+placement, distinguishing implemented operations from planned backends.
+
+[Multi-board capabilities](docs/multi-board.md) separate SoC support from board
+pin ownership. [Sessions and scripts](docs/session-scripts.md) make digital
+benches repeatable. The [channel proxy](proxy/README.md) serves the UI and
+re-exports original/processed blocks through HTTP and SSE independently of the
+ESP32 network. [Simulated usability stories](docs/usability-review.md) record
+keyboard, mouse, touch, screenshots and interpretation-driven changes.
+
 Status: proposal. Firmware is untested on hardware; DSP is host-tested only.
 The Tauri shell, output actuator kinds, and OneWire/SPI-output drivers are
 explicit gaps, not silent omissions. See each directory's notes.
@@ -21,6 +41,10 @@ explicit gaps, not silent omissions. See each directory's notes.
 cargo check --offline --manifest-path dsp/Cargo.toml
 cargo test --offline --manifest-path dsp/Cargo.toml
 cargo fmt --manifest-path dsp/Cargo.toml --all --check
+npm --prefix ui test
+npm --prefix ui run check
+npm --prefix proxy test
+npm --prefix proxy run check
 ```
 
 Frog discovers `dsp` as the nested Rust unit and exposes repository-level

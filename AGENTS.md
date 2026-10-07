@@ -9,6 +9,13 @@ a nested unit, not a separate Git repository.
 - DSP tests: `cargo test --offline --manifest-path dsp/Cargo.toml`
 - DSP compilation: `cargo check --offline --manifest-path dsp/Cargo.toml`
 - Formatting: `cargo fmt --manifest-path dsp/Cargo.toml --all --check`
+- Browser prototype: `npm --prefix ui test` and `npm --prefix ui run check`.
+- Proxy: `npm --prefix proxy test` and `npm --prefix proxy run check`.
+- Optional headless interaction checks: `python3 ui/tests/browser_smoke.py`
+  (Python Playwright and Chromium required; see `ui/README.md`).
+- Portable firmware channel core: compile `firmware/tests/channel_core_test.cpp`
+  with `g++ -std=c++11 -Wall -Wextra -Werror` and run the result. This is not an
+  Arduino integration build. See `docs/channel-lab.md` for the full command.
 - Frog equivalents: `frog repo check sensehub`, `frog repo test sensehub`,
   `frog repo lint sensehub`.
 

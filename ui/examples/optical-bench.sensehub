@@ -1,0 +1,6 @@
+# A repeatable two-channel bench. All times are microseconds.
+add {"schemaVersion":1,"id":"contact","name":"Door contact","kind":"digital","stage":"raw","data":{"encoding":"bits","intervalUs":1000,"values":"0000010101111111100000111110000"}}
+process contact {"debounceUs":2000}
+add {"schemaVersion":1,"id":"optical","name":"Optical receiver","kind":"numeric","stage":"raw","data":{"encoding":"samples","intervalUs":2000,"values":[0.1,0.15,0.9,0.18,0.2,0.35,0.6,0.8,0.65,0.75,0.9,0.5,0.4,0.2,null,0.1,0.9,0.85]}}
+process optical {"median":true,"low":0.3,"high":0.7}
+list

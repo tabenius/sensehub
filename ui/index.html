@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SenseHub · spectral bench</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="lab.css">
+</head>
+<body>
+<header><div><span class="eyebrow">SENSEHUB / DISPLAY PROTOTYPE</span><h1>Spectral bench</h1><p>Inspect the signal. Keep the inference visible.</p></div><span class="badge">LOCAL AUDIO · NO UPLOAD</span></header>
+<main>
+  <section class="source panel" aria-label="Audio source">
+    <button id="demo">Synthetic vowel</button><label class="file">Open audio<input id="file" type="file" accept="audio/*"></label>
+    <span id="source-name" role="status">Loading demo…</span>
+    <label class="frame">Frame <input id="frame" type="range" min="0" max="1" value="0" step="256"><output id="time"></output></label>
+  </section>
+  <section class="panel channel-lab" aria-label="Digital channel lab">
+    <div class="plot-heading"><h2>Digital channels</h2><span>STATES · EDGES · CONDITIONED SIGNALS</span></div>
+    <p class="caption">Add a switch, motion trigger, optical receiver, or a recorded logic stream. Raw data stays available; processing creates a derived trace.</p>
+    <form id="add-channel" class="channel-form">
+      <label>Name <input id="channel-name" value="Logic 1" maxlength="80" required></label>
+      <label>Input <select id="channel-kind"><option value="digital">HIGH / LOW</option><option value="numeric">Numeric → threshold</option></select></label>
+      <label>Sample interval (µs) <input id="channel-interval" type="number" value="1000" min="1" step="1" required></label>
+      <label class="channel-data">Data <textarea id="channel-data" rows="2" placeholder="00110100 or [&#34;0&#34;,&#34;1&#34;]" required>0000010101111111100000111110000</textarea></label>
+      <details class="channel-import"><summary>Timing and provenance</summary><label>Already processed? <select id="channel-stage"><option value="raw">Raw observations</option><option value="conditioned">Conditioned / filtered</option><option value="detected">Detected states / events</option><option value="decoded">Decoded logical states</option></select></label><p>Use ? / null for unknown data. Timestamped JSON uses {"tUs":1000,"value":1}; full channel envelopes also declare encoding and endUs. Device clocks are not synchronized merely by displaying traces together.</p></details>
+      <button type="submit">Add channel</button><button id="channel-demo" type="button">Load sensor examples</button>
+      <label class="file">Import channel JSON<input id="channel-file" type="file" accept=".json,application/json"></label>
+    </form>
+    <p id="channel-message" role="status"></p>
+    <div class="timeline-tools"><label>Time view <select id="time-window"><option value="0">Full recording</option><option value="1000">1 ms</option><option value="10000">10 ms</option><option value="100000">100 ms</option><option value="1000000">1 s</option></select></label><label>Start <input id="time-start" type="range" min="0" max="0" value="0" step="100"></label><output id="time-view"></output></div>
+    <div class="session-tools"><button id="save-session" type="button">Save session</button><label class="file">Open session / script<input id="session-file" type="file" accept=".json,.sensehub,application/json,text/plain"></label><button id="open-console" type="button">Command console</button></div>
+    <div id="channel-list"></div>
+    <details id="command-console"><summary>Command console / repeatable scripts</summary><p class="caption">Declarative commands only. Ctrl+Enter runs the script; Ctrl+K focuses the console. Scripts are validated before applying. Open .sensehub scripts or saved .json sessions above.</p><textarea id="console-input" rows="4" aria-label="SenseHub commands" placeholder="help&#10;list"></textarea><button id="run-console" type="button">Run commands</button><pre id="console-output" role="status">Type help for commands.</pre></details>
+    <details id="proxy-drawer"><summary>Share / subscribe through channel proxy</summary><p class="caption">Share original observations, processed data, or both. The proxy is independent of the ESP32 network. Subscriptions receive the latest channel blocks, not a lossless sample-history log.</p><label>Proxy URL <input id="proxy-url" type="url" value="http://127.0.0.1:8903"></label><label>Branches <select id="proxy-branch"><option value="both">Original + processed</option><option value="raw">Original only</option><option value="processed">Processed only</option></select></label><button id="proxy-publish" type="button">Publish channels</button><button id="proxy-subscribe" type="button">Subscribe</button><button id="proxy-disconnect" type="button">Disconnect</button><p id="proxy-status" role="status">Not connected to a proxy.</p></details>
+    <details class="device-setup"><summary>ESP32 setup and capabilities</summary>
+      <label class="file">Load device capabilities<input id="capabilities-file" type="file" accept=".json,application/json"></label>
+      <button id="capabilities-preview" type="button">AI-Thinker preview</button>
+      <p id="device-capabilities">No device connected. Firmware reports its channel modes, resource limits and configured channels via DESCRIBE (0x20) or USB CAPABILITIES. Requests below are prepared locally, not sent to hardware.</p>
+      <form id="device-config" class="channel-form">
+        <label>Channel ID <input id="device-channel" type="number" value="8" min="8" max="15" required></label>
+        <label>GPIO <select id="device-pin" required></select></label>
+        <label>Mode <select id="device-mode"><option value="input">Read digital input</option><option value="output">Set digital output</option><option value="pwm">Generate PWM</option><option value="disabled">Disable channel</option></select></label>
+        <label>Pull <select id="device-pull"><option value="none">None</option><option value="up">Pull-up</option><option value="down">Pull-down</option></select></label>
+        <label>Poll interval (ms) <input id="device-poll" type="number" value="10" min="1" max="60000" required></label>
+        <label>Debounce (ms) <input id="device-debounce" type="number" value="20" min="0" max="60000" required></label>
+        <label><input id="device-invert" type="checkbox"> Invert input polarity</label>
+        <label>Output level <select id="device-level"><option value="0">LOW</option><option value="1">HIGH</option></select></label>
+        <label>PWM frequency (Hz) <input id="device-frequency" type="number" value="1000" min="1" max="20000" required></label>
+        <label>PWM duty (%, 10-bit) <input id="device-duty" type="number" value="50" min="0" max="100" step="0.1" required></label>
+        <button type="submit">Prepare request</button>
+      </form><pre id="device-request">USB: CAPABILITIES</pre>
+    </details>
+    <details><summary>More possibilities: processing recipes</summary><p><strong>Switch / reed / PIR:</strong> polarity, stable-time debounce, rising/falling events and occupancy. <strong>Photodiode:</strong> analog front-end, median/EMA cleanup, separate LOW/HIGH thresholds; bandpass and optical demodulation next. <strong>Pulse / encoder:</strong> timed edges, pulse widths, duty, frequency and quadrature decoding need dedicated capture support.</p><p><strong>Images:</strong> camera channels carry frames, not bit strings. Background subtraction, thermal calibration, connected regions and Canny/optical flow belong to negotiated camera/host pipelines. <strong>Audio:</strong> gain, filtering, spectrum, formants and event detection are separate derived channels. The processing catalog explains which steps can run on-device and which are still planned.</p></details>
+  </section>
+  <aside class="panel controls">
+    <h2>Display layers</h2>
+    <fieldset><legend>Formant markers</legend>
+      <label><input type="checkbox" data-pref="centers" checked> Centers <span class="swatch center"></span></label>
+      <label><input type="checkbox" data-pref="ranges" checked> Search-range edges <span class="swatch range"></span></label>
+      <label><input type="checkbox" data-pref="bandwidth" checked> Envelope −3 dB edges <span class="swatch bandwidth"></span></label>
+    </fieldset>
+    <fieldset><legend>Musical labels</legend>
+      <label><input type="checkbox" data-pref="notes"> Note names</label>
+      <label><input type="checkbox" data-pref="octaves"> Octave labels</label>
+      <label>A4 reference <input id="reference" type="number" min="400" max="480" value="440" step="1"> Hz</label>
+    </fieldset>
+    <fieldset><legend>Hover / touch / keyboard details</legend>
+      <label><input type="checkbox" data-pref="hover" checked> Enable inspection</label>
+      <label><input type="checkbox" data-field="position" checked> Position</label>
+      <label><input type="checkbox" data-field="value" checked> Spectral / cepstral value</label>
+      <label><input type="checkbox" data-field="time" checked> Frame time</label>
+      <label><input type="checkbox" data-field="music"> Note, octave &amp; cents</label>
+      <label><input type="checkbox" data-field="formant" checked> Selected formant details</label>
+      <label><input type="checkbox" data-field="evidence" checked> Evidence &amp; status</label>
+      <label><input type="checkbox" data-field="settings"> Analysis settings</label>
+    </fieldset>
+    <details><summary>What the markers mean</summary><p>Centers are local maxima of a 2 ms liftered cepstral envelope. Bandwidth edges are that envelope's measured −3 dB crossings within each search range, not LPC pole bandwidths. Unresolved edges are omitted.</p><p>The cepstrum axis is milliseconds. Its formant readout is linked to the frequency view; no reciprocal-frequency formant markers are drawn.</p></details>
+  </aside>
+  <section class="plots">
+    <article class="panel plot"><div class="plot-heading"><h2>Spectrum</h2><span>POWER DENSITY / dB re 1 amplitude²/Hz</span></div>
+      <canvas id="spectrum" tabindex="0" aria-label="Spectrum. Arrow keys move the inspection cursor; Home and End go to the edges."></canvas>
+      <p class="caption">Measured power <span class="key signal"></span> · liftered envelope <span class="key envelope"></span> · frequency in Hz</p>
+    </article>
+    <article class="panel plot"><div class="plot-heading"><h2>Real cepstrum</h2><span>IFFT OF NATURAL LOG MAGNITUDE</span></div>
+      <canvas id="cepstrum" tabindex="0" aria-label="Real cepstrum in milliseconds. Arrow keys move the inspection cursor."></canvas>
+      <p class="caption">Quefrency in ms · zero-quefrency coefficient omitted from plot scaling · coefficients are signed</p>
+    </article>
+    <article class="panel readout"><h2>Linked formant readout <span>Hz — both views</span></h2><div id="formants"></div><p class="caption">Select a row to link its details to either plot. Fixed demo search bands are illustrative, not universal speaker limits. No temporal tracker yet.</p></article>
+    <section id="inspection" class="panel" aria-live="polite" aria-label="Selected inspection details">Hover, touch, or focus a plot and use ← / → to inspect.</section>
+  </section>
+</main>
+<footer>2048-sample Hamming window · 256-sample frame step · real cepstrum · prototype analysis, independent of the Rust/device pipeline</footer>
+<script type="module" src="app.js"></script>
+</body></html>

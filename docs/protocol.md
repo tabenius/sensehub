@@ -20,6 +20,10 @@ with garbage-injected streams.
 
 ## Device → app
 
+The typed digital channel extension, capability discovery, output configuration,
+quality flags and timestamp semantics are specified in [channel lab](channel-lab.md).
+These additions are implemented in firmware source but not board-validated.
+
 | Type | Name    | Payload |
 |------|---------|---------|
 | 0x01 | HELLO   | u8 fw_major, u8 fw_minor, u8 caps bitmask (bit0 ADC, bit1 BT, bit2 WiFi, bit3 I2C, bit4 SPI, bit5 DHT) |
