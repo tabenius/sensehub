@@ -35,6 +35,13 @@ Status: proposal. Firmware is untested on hardware; DSP is host-tested only.
 The Tauri shell, output actuator kinds, and OneWire/SPI-output drivers are
 explicit gaps, not silent omissions. See each directory's notes.
 
+A proposed integration with `remote-android` — microphone and camera capture
+feeding the bench through the existing `window.sensehubAudio` host hook — is
+written up in [remote-android audio integration](docs/remote-android-audio-integration.md).
+It is a proposal, and it is deliberately blocked on reconciling this crate's DSP
+with the separate Phoneme Tauri specification, which describes the same
+pipeline.
+
 ## Local verification
 
 ```sh
