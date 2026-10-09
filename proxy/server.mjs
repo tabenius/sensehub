@@ -8,7 +8,7 @@ import { validId } from '../ui/session.js';
 
 const uiRoot = fileURLToPath(new URL('../ui/', import.meta.url));
 const LIMIT = 8 * 1024 * 1024, TOTAL_LIMIT = 64 * 1024 * 1024;
-const MIME = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.json':'application/json', '.sensehub':'text/plain' };
+const MIME = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.json':'application/json', '.sensehub':'text/plain', '.txt':'text/plain' };
 
 export function createProxy() {
   const records = new Map(), clients = new Set(); let revision = 0;

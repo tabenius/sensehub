@@ -82,3 +82,10 @@ test('numeric units and effective detection parameters stay explicit in exports'
   assert.equal(exported.provenance.pipeline.low, 0.3);
   assert.equal(exported.provenance.pipeline.high, 0.7);
 });
+test('numeric monitoring preserves values/units and does not silently threshold floats', () => {
+  const input=parseChannel(JSON.stringify({schemaVersion:1,name:'Mapped value',kind:'numeric',stage:'conditioned',unit:'Hz',data:{encoding:'samples',intervalUs:1000,values:[20,4000,null,64.5]}}));
+  const monitored=processChannel(input,{output:'numeric'});
+  assert.equal(monitored.kind,'numeric');assert.equal(monitored.unit,'Hz');
+  assert.deepEqual(monitored.points.map(p=>p.value),[20,4000,null,64.5]);
+  assert.throws(()=>processChannel(input,{output:'numeric',debounceUs:1000}));
+});

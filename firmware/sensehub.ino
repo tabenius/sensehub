@@ -442,11 +442,11 @@ static void sendCapabilities(bool usb = false) {
   pinList(CHANNEL_POLICY.outputs, outputs, sizeof(outputs));
   pinList(CHANNEL_POLICY.inputs & ~CHANNEL_POLICY.pulls, noPull, sizeof(noPull));
   int n = snprintf(json, sizeof(json),
-    "{\"schemaVersion\":1,\"profile\":\"%s\",\"soc\":\"%s\",\"transportSupport\":{\"usbFramed\":true,\"wifi\":%s,\"bluetoothSpp\":%s,\"bleHardware\":%s,\"bleImplemented\":false},\"channelIds\":[8,9,10,11,12,13,14,15],"
+    "{\"schemaVersion\":1,\"profile\":\"%s\",\"soc\":\"%s\",\"deviceId\":\"%016llX\",\"transportSupport\":{\"usbFramed\":true,\"wifi\":%s,\"bluetoothSpp\":%s,\"bleHardware\":%s,\"bleImplemented\":false},\"channelIds\":[8,9,10,11,12,13,14,15],"
     "\"availablePins\":%s,\"outputPins\":%s,\"noPullPins\":%s,\"scopeSampler\":%s,\"modes\":%s,\"capture\":\"loop-poll\",\"timestampUnit\":\"us\","
     "\"nominalMinPollMs\":1,\"pwmSlots\":%u,\"pwmResolutionBits\":10,\"pwmMaxHz\":20000,"
     "\"processing\":[\"invert\",\"stable-debounce\"],\"identity\":\"user-configured GPIO; sensor unknown\",\"channels\":[",
-    sensehub::boardName(), ESP.getChipModel(), HAVE_WIFI ? "true" : "false", HAVE_BT ? "true" : "false", HAVE_BLE_HARDWARE ? "true" : "false",
+    sensehub::boardName(), ESP.getChipModel(), (unsigned long long)ESP.getEfuseMac(), HAVE_WIFI ? "true" : "false", HAVE_BT ? "true" : "false", HAVE_BLE_HARDWARE ? "true" : "false",
     inputs, outputs, noPull, SCOPE_ENABLED ? "true" : "false",
     !CHANNEL_POLICY.inputs ? "[]" : !CHANNEL_POLICY.outputs ? "[\"digital-input\"]" : CHANNEL_POLICY.pwm ? "[\"digital-input\",\"digital-output\",\"pwm-output\"]" : "[\"digital-input\",\"digital-output\"]",
     CHANNEL_POLICY.pwm && CHANNEL_POLICY.outputs ? 1 : 0);

@@ -1,0 +1,66 @@
+<section id="controller-workbench" class="panel controller-workbench" aria-label="Visual input and controller construction kit">
+  <div class="plot-heading"><h2>Input playground</h2><span>VIRTUAL SIGNALS · MIDI · GPIO CONTROLS</span></div>
+  <div class="controller-toolbar">
+    <label>Device view <select id="controller-profile"><option value="hercules">Hercules Inpulse MK2 · family concept</option><option value="umx">UMX610 · 61-key concept</option><option value="gpio">ESP32 buttons / switches</option><option value="custom">Your device · construction kit</option></select></label>
+    <label>Drawing zoom <input id="controller-zoom" type="range" min="1" max="3" step="0.1" value="1"></label>
+    <label><input id="layout-edit" type="checkbox"> Move controls</label>
+    <label><input id="controller-hover" type="checkbox" checked> Hover hints</label>
+    <button id="controller-demo" type="button">Guided animation</button>
+    <button id="oscillator-play" type="button">Run virtual signals</button>
+    <button id="oscillator-spectrum" type="button">View frame in spectrum</button>
+    <output id="input-activity">No incoming hardware events yet</output>
+  </div>
+  <p class="caption">Original conceptual drawings, not verified factory maps. Select a control, adjust it by drag/touch/arrow keys, or learn an incoming message. Virtual signals are not played through speakers.</p>
+  <div class="controller-layout">
+    <div class="device-column">
+      <div class="device-scroll"><svg id="device-drawing" viewBox="0 0 1000 420" role="group" aria-label="Interactive conceptual controller"></svg></div>
+      <div id="control-tooltip" class="control-tooltip" role="status">Select a knob, key or button to see its value and binding.</div>
+      <div id="virtual-plot" aria-label="Virtual oscillators and mixed signal"></div>
+      <output id="virtual-inspection" aria-label="Virtual waveform inspected sample" aria-live="off">Hover the trace or use arrow keys to inspect a sample.</output>
+      <output id="oscillator-summary"></output>
+      <details id="oscillator-settings"><summary>Virtual sources · four oscillators</summary><p class="caption">Source switches change the mix; plot legend switches only hide traces. Ideal sampled square/saw waves can alias.</p><div id="oscillator-bank"></div></details>
+    </div>
+    <aside class="binding-inspector">
+      <h3 id="selected-control">Select a control</h3>
+      <div class="binding-flow"><span id="binding-source-pill">Virtual control</span><b aria-hidden="true">→</b><span id="binding-output-pill">Float</span><b aria-hidden="true">→</b><span id="binding-target-pill">Oscillator A</span></div>
+      <label>Adjust selected control <input id="selected-value" type="range" min="0" max="127" step="1" value="64"></label>
+      <button id="selected-press" type="button">Press selected control</button>
+      <button id="midi-learn" type="button">Learn next MIDI / GPIO event</button>
+      <form id="binding-form">
+        <label>Source <select id="binding-source"><option value="virtual">Virtual / on-screen</option><option value="midi">MIDI input</option><option value="gpio">ESP32 GPIO channel</option></select></label>
+        <label>Event <select id="binding-kind"><option value="value">Value</option><option value="cc">MIDI CC</option><option value="note">MIDI note</option><option value="pitchbend">Pitch bend</option><option value="digital">Digital state</option></select></label>
+        <label>Channel (blank = any) <input id="binding-channel" type="number" min="0" max="255"></label>
+        <label>CC / note number (blank = any) <input id="binding-number" type="number" min="0" max="127"></label>
+        <label>Input port / device ID (blank = any) <input id="binding-port" maxlength="120"></label>
+        <label>Output <select id="binding-output"><option value="float">Float</option><option value="binary">Binary HIGH / LOW</option><option value="integer">Raw MIDI / digital integer</option><option value="event">Structured event</option></select></label>
+        <label>Target <select id="binding-target"><option value="A.frequency">Oscillator A frequency</option><option value="A.amplitude">Oscillator A amplitude</option><option value="A.phase">Oscillator A phase</option><option value="A.duty">Oscillator A pulse width</option><option value="A.gate">Oscillator A gate</option><option value="keyboard">Keyboard → last-note voice</option><option value="channel">Mapped data channel only</option></select></label>
+        <details><summary>Range / encoder / behavior</summary>
+          <label><input id="binding-bounded" type="checkbox" checked> Explicit output range</label>
+          <div class="range-pair"><label>Min <input id="binding-min" type="number" step="any" value="20"></label><label>Max <input id="binding-max" type="number" step="any" value="4000"></label></div>
+          <label>Curve <select id="binding-curve"><option value="linear">Linear</option><option value="log">Logarithmic</option></select></label>
+          <label>Encoder mode <select id="binding-mode"><option value="absolute">Absolute</option><option value="twos-complement">Relative: two's complement</option><option value="sign-bit">Relative: sign + magnitude</option></select></label>
+          <label>Scale / relative step <input id="binding-scale" type="number" step="any" value="1"></label>
+          <label>Offset (unbounded absolute) <input id="binding-offset" type="number" step="any" value="0"></label>
+          <label>Binary behavior <select id="binding-behavior"><option value="momentary">Follow input / momentary</option><option value="toggle">Toggle on a new press</option></select></label>
+          <label>Binary conversion <select id="binding-binary-rule"><option value="nonzero">Any nonzero value is HIGH</option><option value="half">At / above half input range</option></select></label>
+        </details>
+        <button type="submit">Apply binding</button>
+      </form>
+      <p id="binding-status" role="status">Mappings are local preferences, not hardware commands.</p>
+    </aside>
+  </div>
+  <div class="controller-toolbar"><button id="simulate-midi" type="button">Simulate MIDI CC</button><button id="simulate-gpio" type="button">Simulate button press / release</button><button id="mapped-channel" type="button">Add selected output to channel lab</button><button id="virtual-channel" type="button">Add virtual waveform to channel lab</button><button id="save-controls" type="button">Save control map</button><label class="file">Open control map<input id="controls-file" type="file" accept=".json,application/json"></label></div>
+  <details id="custom-device"><summary>Your device / add a control / request a device model</summary>
+    <form id="custom-control-form" class="channel-form"><label>Device name <input id="custom-device-name" value="My device" maxlength="80"></label><label>Control label <input id="custom-control-name" value="My knob" maxlength="40"></label><label>Control kind <select id="custom-control-kind"><option value="knob">Knob</option><option value="slider">Slider</option><option value="button">Pushbutton</option><option value="toggle">Toggle switch</option><option value="key">Key</option></select></label><button type="submit">Add visual control</button></form>
+    <label class="file">Use your own device photo<input id="device-photo" type="file" accept="image/png,image/jpeg,image/webp"></label>
+    <label>Model link / request notes <textarea id="device-request-notes" rows="2" placeholder="Model, product link, controls you want to use…"></textarea></label><button id="save-device-request" type="button">Save device request</button><p class="caption">A request file is saved locally; it is not automatically submitted. Use Move controls to place overlays on your photo.</p>
+  </details>
+  <details id="hardware-inputs"><summary>Connect USB MIDI or ESP32 buttons</summary>
+    <div class="controller-toolbar"><button id="connect-midi" type="button">Connect USB MIDI</button><label>MIDI input <select id="midi-port"><option value="">All available inputs</option></select></label><button id="connect-serial" type="button">Connect ESP32 serial</button><button id="disconnect-serial" type="button">Disconnect serial</button></div>
+    <p id="hardware-status" role="status">No hardware connected. Browser MIDI/serial access is requested only when you press Connect.</p>
+    <form id="gpio-button-form" class="channel-form"><label>Device channel <input id="button-channel" type="number" min="8" max="15" value="8"></label><label>GPIO <input id="button-pin" type="number" min="0" max="63" value="13"></label><label>Pull <select id="button-pull"><option value="1">Pull-up</option><option value="0">None</option><option value="2">Pull-down</option></select></label><label><input id="button-invert" type="checkbox" checked> Active-low button</label><label>Debounce (ms) <input id="button-debounce" type="number" min="0" max="60000" value="20"></label><button type="submit">Configure button input</button></form>
+    <pre id="gpio-request">GPIO button: HIGH/LOW states arrive through DIGITAL_OBSERVATION (0x09), with timestamps, revision and quality.</pre>
+  </details>
+  <details id="usbip-setup"><summary>USB over IP / remote USB configuration</summary><form id="usbip-form" class="channel-form"><label>USB/IP server <input id="usbip-host" value="usb-server.local"></label><label>Bus ID <input id="usbip-bus" value="1-2"></label><label>SSH destination (optional) <input id="usbip-ssh" placeholder="user@usb-server"></label><button type="submit">Prepare USB/IP commands</button></form><pre id="usbip-commands">Remote USB must be attached by the host OS before browser MIDI/serial enumeration. No USB device is automatically attached or detached.</pre></details>
+  <details id="controller-inspect"><summary>Incoming / mapped event inspection</summary><pre id="controller-events">Use a virtual control, simulate an event, or connect a device.</pre></details>
+</section>

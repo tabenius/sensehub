@@ -19,8 +19,9 @@ function add(channel, options = {}) {
   if (!validId(id) || channels.has(id)) throw new Error('Channel ID must be unique.');
   const processing = validateProcessing(options.processing ?? {});
   const processed = processChannel(channel, processing);
-  const state = { id, source: channel, processed, options: processed.pipeline, visible: options.visible !== false, raw: options.raw !== false, fraction: 0, error: '' };
+  const state = { id, source: channel, processed, options: processed.pipeline, visible: options.visible !== false, raw: options.raw !== false, fromProxy:options.fromProxy===true, fraction: 0, error: '' };
   channels.set(id, state); makeCard(state); redrawAll();
+  markChanged(state);
   message.textContent = `Added ${channel.name}. ${channels.size} channels in this session.`;
   return id;
 }
@@ -61,17 +62,22 @@ function makeCard(state) {
   const legend = document.createElement('p'); legend.className = 'caption'; legend.textContent = 'Blue dashed: original observations · orange: derived HIGH/LOW · gray: unknown / not recorded. Numeric originals have their own scale.';
   const controls = document.createElement('div'); controls.className = 'processing';
   const invert = check(), debounce = number(0, 0, 60000), low = number(0.3, -1e9, 1e9, 0.01), high = number(0.7, -1e9, 1e9, 0.01), ema = number(1, 0.001, 1, 0.05), median = check();
+  const output=document.createElement('select');output.append(new Option('Digital detector','digital'),new Option('Numeric monitor / filter','numeric'));
+  if(state.source.kind==='numeric')controls.append(label('Output representation',output));
+  const showProcessingFields=()=>{const numeric=state.source.kind==='numeric'&&output.value==='numeric';for(const input of [invert,debounce,low,high]){const parent=input.closest('label');if(parent)parent.hidden=numeric;}};
+  output.addEventListener('change',showProcessingFields);
   controls.append(label('Invert polarity ', invert), label('Stable-time debounce (ms)', debounce));
   if (state.source.kind === 'numeric') controls.append(label('LOW at / below', low), label('HIGH at / above', high), label('EMA α per observation', ema), label('Causal median of last 3 ', median));
   controls.append(button('Apply to derived trace', () => {
     try {
       if ([debounce, ...(state.source.kind === 'numeric' ? [low, high, ema] : [])].some(input => !input.validity.valid)) throw new Error('Check the processing parameter ranges.');
-      applyProcessing(state.id, { invert: invert.checked, debounceUs: Math.round(Number(debounce.value) * 1000), low: Number(low.value), high: Number(high.value), emaAlpha: Number(ema.value), median: median.checked });
+      const numeric=state.source.kind==='numeric'&&output.value==='numeric';
+      applyProcessing(state.id, { invert: numeric?false:invert.checked, debounceUs: numeric?0:Math.round(Number(debounce.value) * 1000), low: Number(low.value), high: Number(high.value), emaAlpha: Number(ema.value), median: median.checked, output:numeric?'numeric':'digital' });
     } catch (error) { state.error = error.message; updateMeta(state); }
   }));
   const explanation = document.createElement('p'); explanation.className = 'caption'; explanation.textContent = 'Order: numeric median → EMA → LOW/HIGH hysteresis → inversion → stable-time debounce. Unknown intervals reset filter state. Imported timing is sample-and-hold; preprocessing adds latency. Edges and duty summarize the derived trace, not the original source.';
   details.append(controls, explanation); card.append(header, meta, canvas, legend, inspection, details); container.append(card);
-  Object.assign(state, { card, canvas, meta, inspection, controls: { invert, debounce, low, high, ema, median, visible, raw } });
+  Object.assign(state, { card, canvas, meta, inspection, controls: { invert, debounce, low, high, ema, median, visible, raw, output }, showProcessingFields, legend, explanation });
   syncControls(state); canvas.hidden = !state.visible;
   function inspect(fraction) { state.fraction = Math.max(0, Math.min(1, fraction)); draw(state); }
   for (const name of ['pointermove', 'pointerdown']) canvas.addEventListener(name, event => {
@@ -87,7 +93,15 @@ function makeCard(state) {
 }
 
 function updateMeta(state) {
+  if(state.processed.kind==='numeric'){
+    const known=state.processed.points.filter(p=>p.value!==null).map(p=>p.value);
+    state.meta.textContent=state.error||`${state.source.stage} numeric → ${state.processed.stage} numeric · ${known.length} known observations · source-local clock`;
+    state.legend.textContent='Blue dashed: original values · orange: numeric output · gray: unknown / not recorded. Each lane shows its scale.';
+    state.explanation.textContent='Numeric output retains source units. Median and EMA are optional; thresholding and debounce are not applied. Unknown intervals reset filter state.';return;
+  }
   const stats = channelStats(state.processed);
+  state.legend.textContent='Blue dashed: original observations · orange: derived HIGH/LOW · gray: unknown / not recorded. Numeric originals have their own scale.';
+  state.explanation.textContent='Order: numeric median → EMA → LOW/HIGH hysteresis → inversion → stable-time debounce. Unknown intervals reset filter state. Edges and duty summarize the derived logic trace.';
   state.meta.textContent = state.error || `${state.source.stage} ${state.source.kind} → ${state.processed.stage} digital · ${stats.rising} rising / ${stats.falling} falling · HIGH ${stats.duty === null ? 'unknown' : (stats.duty * 100).toFixed(1) + '%'} of known time · ${(stats.knownUs / state.source.endUs * 100).toFixed(1)}% coverage · source-local clock`;
 }
 function syncControls(state) {
@@ -95,16 +109,20 @@ function syncControls(state) {
   c.invert.checked = o.invert ?? false; c.debounce.value = (o.debounceUs ?? 0) / 1000;
   c.low.value = o.low ?? 0.3; c.high.value = o.high ?? 0.7; c.ema.value = o.emaAlpha ?? 1; c.median.checked = o.median ?? false;
   c.visible.checked = state.visible; c.raw.checked = state.raw;
+  c.output.value=o.output??'digital';state.showProcessingFields();
 }
 function applyProcessing(id, options) {
   const state = channels.get(id); if (!state) throw new Error(`Unknown channel ${id}.`);
   validateProcessing(options); const derived = processChannel(state.source, options);
   state.options = structuredClone(derived.pipeline); state.processed = derived; state.error = '';
   syncControls(state); updateMeta(state); draw(state);
+  markChanged(state);
 }
 function remove(id) {
   const state = channels.get(id); if (!state) throw new Error(`Unknown channel ${id}.`);
   state.observer.disconnect(); channels.delete(id); state.card.remove(); redrawAll();
+  markChanged(state);
+  document.dispatchEvent(new CustomEvent('sensehub:channel-removed',{detail:{id}}));
 }
 function maximumTime() { return Math.max(1, ...Array.from(channels.values(), c => c.source.endUs)); }
 function timelineWindow() {
@@ -129,7 +147,10 @@ function draw(state) {
   const ctx = canvas.getContext('2d'); ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   const { start, end, span } = timelineWindow();
   const left = 58, right = width - 12, x = t => left + (t - start) / span * (right - left);
-  ctx.font = '11px system-ui'; ctx.fillStyle = '#b7bbad'; ctx.textAlign = 'right'; ctx.fillText('HIGH', left - 8, 29); ctx.fillText('LOW', left - 8, 79);
+  ctx.font = '11px system-ui'; ctx.fillStyle = '#b7bbad'; ctx.textAlign = 'right';
+  const primaryValues=state.processed.kind==='numeric'?state.processed.points.filter(p=>p.value!==null).map(p=>p.value):[0,1];
+  ctx.fillText(state.processed.kind==='numeric'?primaryValues.reduce((m,v)=>Math.max(m,v),1).toPrecision(3):'HIGH',left-8,29);
+  ctx.fillText(state.processed.kind==='numeric'?primaryValues.reduce((m,v)=>Math.min(m,v),0).toPrecision(3):'LOW',left-8,79);
   ctx.strokeStyle = '#3b4039';
   for (const y of [25, 75]) { ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke(); }
   ctx.save(); ctx.beginPath(); ctx.rect(left, 15, right - left, height - 45); ctx.clip();
@@ -138,7 +159,7 @@ function draw(state) {
   }
   function trace(channel, raw) {
     const points = compact(channel.points);
-    const nums = state.source.kind === 'numeric' && raw ? points.filter(p => p.value !== null).map(p => p.value) : [0, 1];
+    const nums = channel.kind === 'numeric' ? points.filter(p => p.value !== null).map(p => p.value) : [0, 1];
     const min = nums.reduce((m, v) => Math.min(m, v), 0), peak = nums.reduce((m, v) => Math.max(m, v), 1), y = v => (raw && separateRaw ? 135 : 75) - (v - min) / (peak - min) * (raw && separateRaw ? 35 : 50);
     ctx.strokeStyle = raw ? '#9aadc9' : '#ffb366'; ctx.setLineDash(raw ? [3, 3] : []); ctx.lineWidth = raw ? 1 : 2;
     // Preserve transitions; dense sub-pixel pulses still need a closer time view.
@@ -165,7 +186,7 @@ function draw(state) {
   const tUs = Math.min(end - 1, start + Math.round(state.fraction * span));
   ctx.strokeStyle = '#eeecdf'; ctx.setLineDash([2, 4]); ctx.beginPath(); ctx.moveTo(x(tUs), 15); ctx.lineTo(x(tUs), 85); ctx.stroke();
   const value = atTime(state.processed, tUs), raw = atTime(state.source, tUs);
-  state.inspection.textContent = `${(tUs / 1000).toFixed(3)} ms · derived ${value === null ? 'unknown' : value ? 'HIGH' : 'LOW'} · source ${raw === null ? 'unknown' : raw}${state.source.unit ? ` ${state.source.unit}` : ''} · ${state.source.stage} → ${state.processed.stage}`;
+  state.inspection.textContent = `${(tUs / 1000).toFixed(3)} ms · derived ${value === null ? 'unknown' : state.processed.kind==='numeric'?value.toFixed(4):value ? 'HIGH' : 'LOW'} · source ${raw === null ? 'unknown' : raw}${state.source.unit ? ` ${state.source.unit}` : ''} · ${state.source.stage} → ${state.processed.stage}`;
 }
 
 function showCapabilities(value) {
@@ -256,7 +277,8 @@ get('session-file').addEventListener('change', async event => {
   } catch (error) { message.textContent = error.message; }
 });
 
-let subscription = null;
+let subscription = null, livePublishTimer=null, proxyDirty=false, publishing=false;
+function markChanged(state){if(!state.fromProxy)proxyDirty=true;}
 const proxyIds = new Map();
 get('proxy-url').value = location.port === '8902' ? 'http://127.0.0.1:8903' : location.origin;
 function proxyBase() {
@@ -264,7 +286,8 @@ function proxyBase() {
   if (!['http:','https:'].includes(url.protocol) || url.username || url.password) throw new Error('Use an HTTP(S) proxy URL.');
   return url.origin;
 }
-get('proxy-publish').addEventListener('click', async () => {
+async function publishChannels(){
+  if(publishing)return;publishing=true;
   try {
     const branch = get('proxy-branch').value;
     const outgoing = Array.from(channels.values()).filter(s => !s.fromProxy).map(s => ({ id: s.id,
@@ -272,9 +295,17 @@ get('proxy-publish').addEventListener('click', async () => {
     if (!outgoing.length) throw new Error('Add local channels to publish first. Subscribed channels are not automatically republished.');
     const response = await fetch(`${proxyBase()}/api/channels`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channels: outgoing }) });
     const value = await response.json(); if (!response.ok) throw new Error(value.error ?? `HTTP ${response.status}`);
-    get('proxy-status').textContent = `Published ${outgoing.length} channels (${branch}). API revision ${value.revision}. Publish again to share subsequent edits.`;
-  } catch (error) { get('proxy-status').textContent = error.message; }
+    get('proxy-status').textContent = `Published ${outgoing.length} channels (${branch}). API revision ${value.revision}. ${livePublishTimer?'Live forwarding active.':'Publish again to share subsequent edits.'}`;
+  } catch (error) { get('proxy-status').textContent = error.message;stopLivePublish(); }
+  finally{publishing=false;}
+}
+function stopLivePublish(){if(livePublishTimer)clearInterval(livePublishTimer);livePublishTimer=null;}
+get('proxy-publish').addEventListener('click', async () => {
+  stopLivePublish();proxyDirty=false;
+  if(get('proxy-live').checked)livePublishTimer=setInterval(()=>{if(proxyDirty&&!publishing){proxyDirty=false;publishChannels();}},100);
+  await publishChannels();
 });
+get('proxy-live').addEventListener('change',()=>{if(!get('proxy-live').checked)stopLivePublish();});
 function ingestRecord(record) {
   for (const branch of ['raw','processed']) if (record[branch]) {
     const envelope = record[branch], key = `${record.id}:${branch}`;
@@ -282,8 +313,8 @@ function ingestRecord(record) {
     const id = proxyIds.get(key);
     const source = parseChannel(JSON.stringify({ ...envelope, name: `${envelope.name} / ${branch === 'raw' ? 'original' : 'processed'}` }));
     const existing = channels.get(id);
-    if (existing) { existing.source = source; existing.processed = processChannel(source, existing.options); updateMeta(existing); redrawAll(); }
-    else { add(source, { id }); channels.get(id).fromProxy = true; }
+    if (existing) window.sensehubLab.upsertChannel(id,{...envelope,name:source.name});
+    else add(source, { id, fromProxy:true, processing:source.kind==='numeric'?{output:'numeric'}:{} });
   }
 }
 get('proxy-subscribe').addEventListener('click', () => {
@@ -303,8 +334,8 @@ get('proxy-subscribe').addEventListener('click', () => {
     subscription.onerror = () => { get('proxy-status').textContent = 'Subscription interrupted; reconnecting will load a fresh snapshot. Check the proxy URL/server.'; };
   } catch (error) { get('proxy-status').textContent = error.message; }
 });
-get('proxy-disconnect').addEventListener('click', () => { subscription?.close(); subscription = null; get('proxy-status').textContent = 'Disconnected. Imported snapshots retained.'; });
-window.addEventListener('pagehide', () => subscription?.close());
+get('proxy-disconnect').addEventListener('click', () => { subscription?.close(); subscription = null;stopLivePublish(); get('proxy-status').textContent = 'Disconnected. Imported snapshots retained.'; });
+window.addEventListener('pagehide', () => {subscription?.close();stopLivePublish();});
 for (const fileLabel of document.querySelectorAll('.file')) {
   fileLabel.tabIndex = 0; fileLabel.setAttribute('role', 'button');
   fileLabel.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); fileLabel.querySelector('input[type=file]').click(); } });
@@ -317,4 +348,17 @@ window.sensehubLab = Object.freeze({
   channels: () => Array.from(channels.values(), c => exportChannel(c.processed)),
   session: sessionObject,
   runScript,
+  upsertChannel: (id, envelope, options = {}) => {
+    if (!validId(id)) throw new Error('Invalid channel id.');
+    const source = parseChannel(JSON.stringify(envelope)), state = channels.get(id);
+    if (state) {
+      const changed=state.source.kind!==source.kind, processing=options.processing??(changed?{output:source.kind==='numeric'?'numeric':'digital'}:state.options), derived=processChannel(source,processing);
+      if(changed){state.observer.disconnect();state.card.remove();}
+      state.source=source;state.processed=derived;state.options=derived.pipeline;
+      if(changed)makeCard(state);else updateMeta(state);redrawAll();
+      markChanged(state);
+    }
+    else add(source, { id, processing:options.processing??(source.kind==='numeric'?{output:'numeric'}:{}) });
+    return id;
+  },
 });

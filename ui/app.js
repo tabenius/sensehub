@@ -1,5 +1,6 @@
 import { analyze, syntheticVowel, markerSet, musicalLabel } from './signal.js';
 import './channel-ui.js';
+import './controller-ui.js';
 
 const defaults = { centers: true, ranges: true, bandwidth: true, notes: false, octaves: false, hover: true,
   fields: { position: true, value: true, time: true, music: false, formant: true, evidence: true, settings: false }, reference: 440 };
@@ -16,6 +17,7 @@ try {
 let samples, sampleRate = 16000, result, selected = 'F1', inspection = null, loadGeneration = 0;
 const slider = document.querySelector('#frame');
 const info = document.querySelector('#inspection');
+document.getElementById('spectrum-range').addEventListener('change',()=>render());
 const views = ['spectrum', 'cepstrum'].map(id => ({ id, canvas: document.getElementById(id), fraction: 0.4, geometry: null }));
 const colors = { range: '#9aadc9', center: '#ffb366', bandwidth: '#b4cf89' };
 const hz = value => value === null ? 'unresolved' : `${value.toFixed(0)} Hz`;
@@ -85,7 +87,7 @@ function draw(view) {
   ctx.clearRect(0, 0, width, height);
   const musicalAxis = id === 'spectrum' && (prefs.notes || prefs.octaves);
   const left = 62, right = width - 12, top = 30, bottom = height - (musicalAxis ? 56 : 35);
-  const maximum = id === 'spectrum' ? Math.min(4000, sampleRate / 2) : Math.min(20, (result.size / 2 - 1) * 1000 / sampleRate);
+  const maximum = id === 'spectrum' ? (document.getElementById('spectrum-range').value==='nyquist'?sampleRate/2:Math.min(4000,sampleRate/2)) : Math.min(20, (result.size / 2 - 1) * 1000 / sampleRate);
   const data = id === 'spectrum' ? result.db : result.cepstrum;
   const spacing = id === 'spectrum' ? result.binHz : 1000 / sampleRate;
   const last = Math.min(data.length - 1, Math.floor(maximum / spacing));
@@ -227,3 +229,4 @@ for (const view of views) {
   new ResizeObserver(() => { if (result) { draw(view); renderInspection(); } }).observe(view.canvas);
 }
 setSource(syntheticVowel(), 16000, 'Synthetic /a/-like signal');
+window.sensehubAudio = Object.freeze({ setVirtualSamples: (data, rate, name) => { loadGeneration++;document.getElementById('spectrum-range').value='nyquist'; setSource(data, rate, name); } });

@@ -90,9 +90,11 @@ export function debounce(points, endUs, holdUs) {
 }
 
 export function processChannel(channel, options = {}) {
-  const { invert = false, debounceUs = 0, low = 0.3, high = 0.7, emaAlpha = 1, median = false } = options;
+  const { invert = false, debounceUs = 0, low = 0.3, high = 0.7, emaAlpha = 1, median = false, output = 'digital' } = options;
+  if (!['digital','numeric'].includes(output) || output === 'numeric' && channel.kind !== 'numeric') throw new Error('Numeric output requires a numeric source.');
+  if (output === 'numeric' && (invert || debounceUs)) throw new Error('Polarity inversion and stable-time debounce apply to logic output.');
   if (!(emaAlpha > 0 && emaAlpha <= 1)) throw new Error('EMA alpha must be in (0,1].');
-  if (channel.kind === 'numeric' && (!Number.isFinite(low) || !Number.isFinite(high) || low >= high)) throw new Error('LOW threshold must be below HIGH threshold.');
+  if (channel.kind === 'numeric' && output === 'digital' && (!Number.isFinite(low) || !Number.isFinite(high) || low >= high)) throw new Error('LOW threshold must be below HIGH threshold.');
   let smoothed = null, stable = null, history = [];
   const conditioned = channel.points.map(p => {
     if (p.value === null) { smoothed = null; stable = null; history = []; return { ...p }; }
@@ -101,14 +103,17 @@ export function processChannel(channel, options = {}) {
       history.push(value); if (history.length > 3) history.shift();
       if (median) value = [...history].sort((a, b) => a - b)[Math.floor(history.length / 2)];
       smoothed = smoothed === null ? value : smoothed + emaAlpha * (value - smoothed);
+      if (output === 'numeric') return { tUs:p.tUs, value:smoothed };
       if (smoothed <= low) stable = 0; else if (smoothed >= high) stable = 1;
       value = stable;
     }
     return { tUs: p.tUs, value: value === null ? null : invert ? 1 - value : value };
   });
+  if (output === 'numeric') return { ...channel, points:conditioned, stage:median || emaAlpha !== 1 ? 'conditioned' : channel.stage,
+    pipeline:{ invert, debounceUs, low, high, emaAlpha, median, output },sourceStage:channel.stage };
   const points = debounce(conditioned, channel.endUs, debounceUs);
   return { ...channel, kind: 'digital', stage: channel.kind === 'numeric' ? 'detected' : (invert || debounceUs ? 'conditioned' : channel.stage),
-    unit: 'logic', points, pipeline: { invert, debounceUs, low, high, emaAlpha, median }, sourceStage: channel.stage };
+    unit: 'logic', points, pipeline: { invert, debounceUs, low, high, emaAlpha, median, output }, sourceStage: channel.stage };
 }
 
 export function channelStats(channel) {

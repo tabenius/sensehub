@@ -1,9 +1,10 @@
 import { parseChannel, processChannel } from './channels.js';
 export const validId = id => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(id);
 export function validateProcessing(options = {}) {
-  const known = ['invert','debounceUs','low','high','emaAlpha','median'];
+  const known = ['invert','debounceUs','low','high','emaAlpha','median','output'];
   if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(k => !known.includes(k))) throw new Error('Unknown processing option.');
   for (const key of ['invert','median']) if (key in options && typeof options[key] !== 'boolean') throw new Error(`${key} must be boolean.`);
+  if ('output' in options && !['digital','numeric'].includes(options.output)) throw new Error('Unknown output representation.');
   return options;
 }
 export function sourceEnvelope(channel) {

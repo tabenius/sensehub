@@ -2,5 +2,12 @@
   "name": "sensehub-display-prototype",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test tests/*.test.js", "check": "node --check signal.js && node --check app.js && node --check channels.js && node --check channel-ui.js && node --check capabilities.js && node --check session.js" }
+  "scripts": {
+    "postinstall": "node scripts/vendor.mjs",
+    "build": "node scripts/vendor.mjs",
+    "test": "node --test tests/*.test.js",
+    "check": "node --check signal.js && node --check app.js && node --check channels.js && node --check channel-ui.js && node --check capabilities.js && node --check session.js && node --check controller-core.js && node --check controller-ui.js && node --check transport.js"
+  },
+  "dependencies": { "uplot": "1.6.32", "d3-selection": "3.0.0", "d3-scale": "4.0.2" },
+  "devDependencies": { "esbuild": "0.28.2" }
 }

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>SenseHub · spectral bench</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="lab.css">
+  <title>SenseHub · spectral bench</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="lab.css"><link rel="stylesheet" href="controllers.css"><link rel="stylesheet" href="vendor/uPlot.css">
 </head>
 <body>
 <header><div><span class="eyebrow">SENSEHUB / DISPLAY PROTOTYPE</span><h1>Spectral bench</h1><p>Inspect the signal. Keep the inference visible.</p></div><span class="badge">LOCAL AUDIO · NO UPLOAD</span></header>
@@ -29,7 +29,7 @@
     <div class="session-tools"><button id="save-session" type="button">Save session</button><label class="file">Open session / script<input id="session-file" type="file" accept=".json,.sensehub,application/json,text/plain"></label><button id="open-console" type="button">Command console</button></div>
     <div id="channel-list"></div>
     <details id="command-console"><summary>Command console / repeatable scripts</summary><p class="caption">Declarative commands only. Ctrl+Enter runs the script; Ctrl+K focuses the console. Scripts are validated before applying. Open .sensehub scripts or saved .json sessions above.</p><textarea id="console-input" rows="4" aria-label="SenseHub commands" placeholder="help&#10;list"></textarea><button id="run-console" type="button">Run commands</button><pre id="console-output" role="status">Type help for commands.</pre></details>
-    <details id="proxy-drawer"><summary>Share / subscribe through channel proxy</summary><p class="caption">Share original observations, processed data, or both. The proxy is independent of the ESP32 network. Subscriptions receive the latest channel blocks, not a lossless sample-history log.</p><label>Proxy URL <input id="proxy-url" type="url" value="http://127.0.0.1:8903"></label><label>Branches <select id="proxy-branch"><option value="both">Original + processed</option><option value="raw">Original only</option><option value="processed">Processed only</option></select></label><button id="proxy-publish" type="button">Publish channels</button><button id="proxy-subscribe" type="button">Subscribe</button><button id="proxy-disconnect" type="button">Disconnect</button><p id="proxy-status" role="status">Not connected to a proxy.</p></details>
+    <details id="proxy-drawer"><summary>Share / subscribe through channel proxy</summary><p class="caption">Share original observations, processed data, or both. The proxy is independent of the ESP32 network. Subscriptions receive the latest channel blocks, not a lossless sample-history log.</p><label>Proxy URL <input id="proxy-url" type="url" value="http://127.0.0.1:8903"></label><label>Branches <select id="proxy-branch"><option value="both">Original + processed</option><option value="raw">Original only</option><option value="processed">Processed only</option></select></label><label><input id="proxy-live" type="checkbox"> Live forward after Publish · up to 10 updates/s</label><button id="proxy-publish" type="button">Publish channels</button><button id="proxy-subscribe" type="button">Subscribe</button><button id="proxy-disconnect" type="button">Disconnect</button><p id="proxy-status" role="status">Not connected to a proxy.</p></details>
     <details class="device-setup"><summary>ESP32 setup and capabilities</summary>
       <label class="file">Load device capabilities<input id="capabilities-file" type="file" accept=".json,application/json"></label>
       <button id="capabilities-preview" type="button">AI-Thinker preview</button>
@@ -76,6 +76,7 @@
   </aside>
   <section class="plots">
     <article class="panel plot"><div class="plot-heading"><h2>Spectrum</h2><span>POWER DENSITY / dB re 1 amplitude²/Hz</span></div>
+      <label class="caption">Frequency view <select id="spectrum-range"><option value="4000">Voice band · 0–4 kHz</option><option value="nyquist">Full sampled band</option></select></label>
       <canvas id="spectrum" tabindex="0" aria-label="Spectrum. Arrow keys move the inspection cursor; Home and End go to the edges."></canvas>
       <p class="caption">Measured power <span class="key signal"></span> · liftered envelope <span class="key envelope"></span> · frequency in Hz</p>
     </article>
