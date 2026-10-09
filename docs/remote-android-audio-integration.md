@@ -91,6 +91,10 @@ Two specifications of one DSP is how the same analysis gets written twice with
 subtly different semantics. `sensehub-dsp-spec-reconciliation` is p2 for that
 reason: the other four tasks may change shape depending on how it resolves.
 
+Both draft specs are currently unreachable from the Atlas site; see
+`doc.ragbaz`'s `docs/research/doc-ragbaz-scope-proposal.md`, which proposes
+where document preparation and unpublished specs should live.
+
 ## Dependencies as recorded in frog
 
 ```
